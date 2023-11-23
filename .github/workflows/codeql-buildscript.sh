@@ -1,29 +1,30 @@
 #!/usr/bin/env bash
 
-cmake -S . -B build \
-  -DWAMR_BUILD_AOT=1 -DWAMR_BUILD_INTERP=1 -DWAMR_BUILD_FAST_JIT=1 -DWAMR_BUILD_JIT=1 \
-  -DWAMR_BUILD_CUSTOM_NAME_SECTION=0 \
-  -DWAMR_BUILD_DEBUG_INTERP=0 \
-  -DWAMR_BUILD_DEBUG_AOT=0 \
-  -DWAMR_BUILD_DUMP_CALL_STACK=0 \
-  -DWAMR_BUILD_LIBC_UVWASI=0 \
-  -DWAMR_BUILD_LIBC_EMCC=0 \
-  -DWAMR_BUILD_LIB_RATS=0 \
-  -DWAMR_BUILD_LOAD_CUSTOM_SECTION=0 \
-  -DWAMR_BUILD_MEMORY_PROFILING=0 \
-  -DWAMR_BUILD_MINI_LOADER=0 \
-  -DWAMR_BUILD_MULTI_MODULE=0 \
-  -DWAMR_BUILD_PERF_PROFILING=0 \
-  -DWAMR_BUILD_SPEC_TEST=0 \
-  -DWAMR_BUILD_BULK_MEMORY=1 \
-  -DWAMR_BUILD_LIB_PTHREAD=1 \
-  -DWAMR_BUILD_LIB_PTHREAD_SEMAPHORE=1 \
-  -DWAMR_BUILD_LIB_WASI_THREADS=1 \
-  -DWAMR_BUILD_LIBC_BUILTIN=1 \
-  -DWAMR_BUILD_LIBC_WASI=1 \
-  -DWAMR_BUILD_REF_TYPES=1 \
-  -DWAMR_BUILD_SIMD=1 \
-  -DWAMR_BUILD_SHARED_MEMORY=1 \
-  -DWAMR_BUILD_TAIL_CALL=1 \
-  -DWAMR_BUILD_THREAD_MGR=1
-cmake --build build --config Release --parallel $(nproc)
+# Copyright (C) 2019 Intel Corporation.  All rights reserved.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+readonly CURRENT_PATH=$(dirname "$(realpath "$0")")
+readonly ROOT=$(realpath "${CURRENT_PATH}/..")
+
+# Change directory to the project root
+cd "${ROOT}" || exit
+
+# Remove existing build directory
+rm -rf product-mini/platforms/linux/build
+
+# Create the build directory
+mkdir -p product-mini/platforms/linux/build
+
+# Change directory to the build directory
+cd product-mini/platforms/linux/build || exit
+
+# Run CMake
+cmake ..
+
+# Run Make
+make
+
+# Copy the binary to build_out directory
+echo 'Copying the binary ...'
+mkdir -p "${ROOT}/build_out"
+cp iwasm "${ROOT}/build_out/iwasm"
