@@ -141,6 +141,12 @@ else
 CFLAGS += -DWASM_ENABLE_WORD_ALIGN_READ=0
 endif
 
+ifeq ($(CONFIG_INTERPRETERS_WAMR_MEM_DUAL_BUS_MIRROR),y)
+CFLAGS += -DWASM_MEM_DUAL_BUS_MIRROR=1
+else
+CFLAGS += -DWASM_MEM_DUAL_BUS_MIRROR=0
+endif
+
 ifeq ($(CONFIG_INTERPRETERS_WAMR_FAST), y)
 CFLAGS += -DWASM_ENABLE_FAST_INTERP=1
 CFLAGS += -DWASM_ENABLE_INTERP=1
@@ -230,25 +236,38 @@ else
 CFLAGS += -DWASM_ENABLE_LIBC_BUILTIN=0
 endif
 
-ifeq ($(CONFIG_INTERPRETERS_WAMR_CONFIGUABLE_BOUNDS_CHECKS),y)
-CFLAGS += -DWASM_CONFIGUABLE_BOUNDS_CHECKS=1
+ifeq ($(CONFIG_INTERPRETERS_WAMR_CONFIGURABLE_BOUNDS_CHECKS),y)
+CFLAGS += -DWASM_CONFIGURABLE_BOUNDS_CHECKS=1
 else
-CFLAGS += -DWASM_CONFIGUABLE_BOUNDS_CHECKS=0
+CFLAGS += -DWASM_CONFIGURABLE_BOUNDS_CHECKS=0
 endif
 
 ifeq ($(CONFIG_INTERPRETERS_WAMR_LIBC_WASI),y)
 CFLAGS += -DWASM_ENABLE_LIBC_WASI=1
 CFLAGS += -I$(IWASM_ROOT)/libraries/libc-wasi/sandboxed-system-primitives/src
 CFLAGS += -I$(IWASM_ROOT)/libraries/libc-wasi/sandboxed-system-primitives/include
+CFLAGS += -I${SHARED_ROOT}/platform/common/libc-util
+CSRCS += blocking_op.c
 CSRCS += posix_socket.c
+CSRCS += posix_file.c
+CSRCS += posix_clock.c
+CSRCS += libc_errno.c
 CSRCS += libc_wasi_wrapper.c
 VPATH += $(IWASM_ROOT)/libraries/libc-wasi
 CSRCS += posix.c
 CSRCS += random.c
 CSRCS += str.c
 VPATH += $(IWASM_ROOT)/libraries/libc-wasi/sandboxed-system-primitives/src
+# todo: use Kconfig select instead
+CONFIG_INTERPRETERS_WAMR_MODULE_INSTANCE_CONTEXT = y
 else
 CFLAGS += -DWASM_ENABLE_LIBC_WASI=0
+endif
+
+ifeq ($(CONFIG_INTERPRETERS_WAMR_MODULE_INSTANCE_CONTEXT),y)
+CFLAGS += -DWASM_ENABLE_MODULE_INST_CONTEXT=1
+else
+CFLAGS += -DWASM_ENABLE_MODULE_INST_CONTEXT=0
 endif
 
 ifeq ($(CONFIG_INTERPRETERS_WAMR_MULTI_MODULE),y)
@@ -263,6 +282,15 @@ CSRCS += thread_manager.c
 VPATH += $(IWASM_ROOT)/libraries/thread-mgr
 else
 CFLAGS += -DWASM_ENABLE_THREAD_MGR=0
+endif
+
+ifeq ($(CONFIG_INTERPRETERS_WAMR_LIB_WASI_THREADS),y)
+CFLAGS += -DWASM_ENABLE_LIB_WASI_THREADS=1
+CSRCS += lib_wasi_threads_wrapper.c
+CSRCS += tid_allocator.c
+VPATH += $(IWASM_ROOT)/libraries/lib-wasi-threads
+else
+CFLAGS += -DWASM_ENABLE_LIB_WASI_THREADS=0
 endif
 
 ifeq ($(CONFIG_INTERPRETERS_WAMR_LIB_PTHREAD),y)
@@ -284,6 +312,15 @@ CFLAGS += -DWASM_DISABLE_STACK_HW_BOUND_CHECK=1
 else
 CFLAGS += -DWASM_DISABLE_HW_BOUND_CHECK=0
 CFLAGS += -DWASM_DISABLE_STACK_HW_BOUND_CHECK=0
+endif
+
+# REVISIT: is this worth to have a Kconfig?
+CFLAGS += -DWASM_DISABLE_WAKEUP_BLOCKING_OP=0
+
+ifeq ($(CONFIG_INTERPRETERS_WAMR_LOAD_CUSTOM_SECTIONS),y)
+CFLAGS += -DWASM_ENABLE_LOAD_CUSTOM_SECTION=1
+else
+CFLAGS += -DWASM_ENABLE_LOAD_CUSTOM_SECTION=0
 endif
 
 ifeq ($(CONFIG_INTERPRETERS_WAMR_CUSTOM_NAME_SECTIONS),y)
@@ -331,13 +368,16 @@ CFLAGS += -I$(IWASM_ROOT)/interpreter
 endif
 
 CSRCS += nuttx_platform.c \
+         posix_blocking_op.c \
          posix_thread.c \
          posix_time.c \
+         posix_sleep.c \
          mem_alloc.c \
          ems_kfc.c \
          ems_alloc.c \
          ems_hmu.c \
          bh_assert.c \
+         bh_bitmap.c \
          bh_common.c \
          bh_hashmap.c \
          bh_list.c \
@@ -347,6 +387,7 @@ CSRCS += nuttx_platform.c \
          bh_read_file.c \
          runtime_timer.c \
          wasm_application.c \
+         wasm_blocking_op.c \
          wasm_runtime_common.c \
          wasm_native.c \
          wasm_exec_env.c \
@@ -357,6 +398,7 @@ ASRCS += $(INVOKE_NATIVE)
 
 VPATH += $(SHARED_ROOT)/platform/nuttx
 VPATH += $(SHARED_ROOT)/platform/common/posix
+VPATH += $(SHARED_ROOT)/platform/common/libc-util
 VPATH += $(SHARED_ROOT)/mem-alloc
 VPATH += $(SHARED_ROOT)/mem-alloc/ems
 VPATH += $(SHARED_ROOT)/utils

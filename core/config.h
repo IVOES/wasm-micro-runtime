@@ -144,6 +144,14 @@
 #define WASM_ENABLE_WASI_NN 0
 #endif
 
+#ifndef WASM_ENABLE_WASI_NN_GPU
+#define WASM_ENABLE_WASI_NN_GPU 0
+#endif
+
+#ifndef WASM_ENABLE_WASI_NN_EXTERNAL_DELEGATE
+#define WASM_ENABLE_WASI_NN_EXTERNAL_DELEGATE 0
+#endif
+
 /* Default disable libc emcc */
 #ifndef WASM_ENABLE_LIBC_EMCC
 #define WASM_ENABLE_LIBC_EMCC 0
@@ -307,6 +315,11 @@
 #define BH_ENABLE_GC_VERIFY 0
 #endif
 
+/* Heap corruption check, enabled by default */
+#ifndef BH_ENABLE_GC_CORRUPTION_CHECK
+#define BH_ENABLE_GC_CORRUPTION_CHECK 1
+#endif
+
 /* Enable global heap pool if heap verification is enabled */
 #if BH_ENABLE_GC_VERIFY != 0
 #define WASM_ENABLE_GLOBAL_HEAP_POOL 1
@@ -459,6 +472,22 @@
 /* Configurable bounds checks */
 #ifndef WASM_CONFIGURABLE_BOUNDS_CHECKS
 #define WASM_CONFIGURABLE_BOUNDS_CHECKS 0
+#endif
+
+/* Some chip cannot support external ram with rwx attr at the same time,
+   it has to map it into 2 spaces of idbus and dbus, code in dbus can be
+   read/written and read/executed in ibus. so there are 2 steps to execute
+   the code, first, copy & do relocation in dbus space, and second execute
+   it in ibus space, since in the 2 spaces the contents are the same,
+   so we call it bus mirror.
+ */
+#ifndef WASM_MEM_DUAL_BUS_MIRROR
+#define WASM_MEM_DUAL_BUS_MIRROR 0
+#endif
+
+/* The max number of module instance contexts. */
+#ifndef WASM_MAX_INSTANCE_CONTEXTS
+#define WASM_MAX_INSTANCE_CONTEXTS 8
 #endif
 
 #endif /* end of _CONFIG_H_ */

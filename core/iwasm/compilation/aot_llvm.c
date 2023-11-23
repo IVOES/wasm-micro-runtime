@@ -146,6 +146,20 @@ aot_target_precheck_can_use_musttail(const AOTCompContext *comp_ctx)
          */
         return false;
     }
+    if (!strcmp(comp_ctx->target_arch, "mips")) {
+        /*
+         * cf.
+         * https://github.com/bytecodealliance/wasm-micro-runtime/issues/2412
+         */
+        return false;
+    }
+    if (strstr(comp_ctx->target_arch, "thumb")) {
+        /*
+         * cf.
+         * https://github.com/bytecodealliance/wasm-micro-runtime/issues/2412
+         */
+        return false;
+    }
     /*
      * x86-64/i386: true
      *
@@ -237,9 +251,10 @@ get_inst_extra_offset(AOTCompContext *comp_ctx)
     const AOTCompData *comp_data = comp_ctx->comp_data;
     uint32 table_count = comp_data->import_table_count + comp_data->table_count;
     uint64 offset = get_tbl_inst_offset(comp_ctx, NULL, table_count);
-    bh_assert(offset <= UINT_MAX);
-    offset = align_uint(offset, 8);
-    return offset;
+    uint32 offset_32 = (uint32)offset;
+    bh_assert(offset <= UINT32_MAX);
+    offset_32 = align_uint((uint32)offset_32, 8);
+    return offset_32;
 }
 
 /*
@@ -309,8 +324,8 @@ aot_add_precheck_function(AOTCompContext *comp_ctx, LLVMModuleRef module,
         goto fail;
     }
 
-    unsigned int param_count = LLVMCountParams(precheck_func);
-    uint64 sz = param_count * sizeof(LLVMValueRef);
+    uint32 param_count = LLVMCountParams(precheck_func);
+    uint32 sz = param_count * (uint32)sizeof(LLVMValueRef);
     params = wasm_runtime_malloc(sz);
     if (params == NULL) {
         goto fail;
@@ -518,12 +533,18 @@ aot_add_precheck_function(AOTCompContext *comp_ctx, LLVMModuleRef module,
     }
     wasm_runtime_free(params);
     params = NULL;
+
+#if LLVM_VERSION_MAJOR < 17
     if (aot_target_precheck_can_use_musttail(comp_ctx)) {
         LLVMSetTailCallKind(retval, LLVMTailCallKindMustTail);
     }
     else {
         LLVMSetTailCallKind(retval, LLVMTailCallKindTail);
     }
+#else
+    LLVMSetTailCall(retval, true);
+#endif
+
     if (ret_type == VOID_TYPE) {
         if (!LLVMBuildRetVoid(b)) {
             goto fail;
@@ -626,8 +647,8 @@ aot_add_llvm_func(AOTCompContext *comp_ctx, LLVMModuleRef module,
     if (comp_ctx->is_indirect_mode) {
         /* avoid LUT relocations ("switch-table") */
         LLVMAttributeRef attr_no_jump_tables = LLVMCreateStringAttribute(
-            comp_ctx->context, "no-jump-tables", strlen("no-jump-tables"),
-            "true", strlen("true"));
+            comp_ctx->context, "no-jump-tables",
+            (uint32)strlen("no-jump-tables"), "true", (uint32)strlen("true"));
         LLVMAddAttributeAtIndex(func, LLVMAttributeFunctionIndex,
                                 attr_no_jump_tables);
     }
@@ -1901,6 +1922,7 @@ static ArchItem valid_archs[] = {
 static const char *valid_abis[] = {
     "gnu",
     "eabi",
+    "eabihf",
     "gnueabihf",
     "msvc",
     "ilp32",
@@ -1916,13 +1938,33 @@ static void
 print_supported_targets()
 {
     uint32 i;
+    const char *target_name;
+
     os_printf("Supported targets:\n");
-    for (i = 0; i < sizeof(valid_archs) / sizeof(ArchItem); i++) {
-        os_printf("%s ", valid_archs[i].arch);
-        if (valid_archs[i].support_eb)
-            os_printf("%seb ", valid_archs[i].arch);
+    /* over the list of all available targets */
+    for (LLVMTargetRef target = LLVMGetFirstTarget(); target != NULL;
+         target = LLVMGetNextTarget(target)) {
+        target_name = LLVMGetTargetName(target);
+        /* Skip mipsel, aarch64_be since prefix mips, aarch64 will cover them */
+        if (strcmp(target_name, "mipsel") == 0)
+            continue;
+        else if (strcmp(target_name, "aarch64_be") == 0)
+            continue;
+
+        if (strcmp(target_name, "x86-64") == 0)
+            os_printf("  x86_64\n");
+        else if (strcmp(target_name, "x86") == 0)
+            os_printf("  i386\n");
+        else {
+            for (i = 0; i < sizeof(valid_archs) / sizeof(ArchItem); i++) {
+                /* If target_name is prefix for valid_archs[i].arch */
+                if ((strncmp(target_name, valid_archs[i].arch,
+                             strlen(target_name))
+                     == 0))
+                    os_printf("  %s\n", valid_archs[i].arch);
+            }
+        }
     }
-    os_printf("\n");
 }
 
 static void
@@ -1976,6 +2018,18 @@ get_target_arch_from_triple(const char *triple, char *arch_buf, uint32 buf_size)
         arch_buf[i++] = *triple++;
     /* Make sure buffer is long enough */
     bh_assert(*triple == '-' || *triple == '\0');
+}
+
+static bool
+is_baremetal_target(const char *target, const char *cpu, const char *abi)
+{
+    /* TODO: support more baremetal targets */
+    if (target) {
+        /* If target is thumbxxx, then it is baremetal target */
+        if (!strncmp(target, "thumb", strlen("thumb")))
+            return true;
+    }
+    return false;
 }
 
 void
@@ -2081,7 +2135,7 @@ jit_stack_size_callback(void *user_data, const char *name, size_t namelen,
         return;
     }
     /* ensure NUL termination */
-    bh_memcpy_s(buf, sizeof(buf), name, namelen);
+    bh_memcpy_s(buf, (uint32)sizeof(buf), name, (uint32)namelen);
     buf[namelen] = 0;
 
     ret = sscanf(buf, AOT_FUNC_INTERNAL_PREFIX "%" SCNu32, &func_idx);
@@ -2102,7 +2156,7 @@ jit_stack_size_callback(void *user_data, const char *name, size_t namelen,
 
     /* Note: -1 == AOT_NEG_ONE from aot_create_stack_sizes */
     bh_assert(comp_ctx->jit_stack_sizes[func_idx] == (uint32)-1);
-    comp_ctx->jit_stack_sizes[func_idx] = stack_size + call_size;
+    comp_ctx->jit_stack_sizes[func_idx] = (uint32)stack_size + call_size;
 }
 
 static bool
@@ -2164,8 +2218,10 @@ bool
 aot_compiler_init(void)
 {
     /* Initialize LLVM environment */
-
+#if LLVM_VERSION_MAJOR < 17
     LLVMInitializeCore(LLVMGetGlobalPassRegistry());
+#endif
+
 #if WASM_ENABLE_WAMR_COMPILER != 0
     /* Init environment of all targets for AOT compiler */
     LLVMInitializeAllTargetInfos();
@@ -2198,7 +2254,7 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     char *triple_norm_new = NULL, *cpu_new = NULL;
     char *err = NULL, *fp_round = "round.tonearest",
          *fp_exce = "fpexcept.strict";
-    char triple_buf[32] = { 0 }, features_buf[128] = { 0 };
+    char triple_buf[128] = { 0 }, features_buf[128] = { 0 };
     uint32 opt_level, size_level, i;
     LLVMCodeModel code_model;
     LLVMTargetDataRef target_data_ref;
@@ -2307,6 +2363,9 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
 
     if (option->llvm_passes)
         comp_ctx->llvm_passes = option->llvm_passes;
+
+    if (option->builtin_intrinsics)
+        comp_ctx->builtin_intrinsics = option->builtin_intrinsics;
 
     comp_ctx->opt_level = option->opt_level;
     comp_ctx->size_level = option->size_level;
@@ -2491,6 +2550,7 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
              * for Windows/MacOS under Linux host, or generating AOT file for
              * Linux/MacOS under Windows host.
              */
+
             if (!strcmp(abi, "msvc")) {
                 if (!strcmp(arch1, "i386"))
                     vendor_sys = "-pc-win32-";
@@ -2498,7 +2558,10 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                     vendor_sys = "-pc-windows-";
             }
             else {
-                vendor_sys = "-pc-linux-";
+                if (is_baremetal_target(arch, cpu, abi))
+                    vendor_sys = "-unknown-none-";
+                else
+                    vendor_sys = "-pc-linux-";
             }
 
             bh_assert(strlen(arch1) + strlen(vendor_sys) + strlen(abi)
@@ -2533,6 +2596,11 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 vendor_sys = "-pc-win32-";
                 if (!abi)
                     abi = "msvc";
+            }
+            else if (is_baremetal_target(arch, cpu, abi)) {
+                vendor_sys = "-unknown-none-";
+                if (!abi)
+                    abi = "gnu";
             }
             else {
                 vendor_sys = "-pc-linux-";
@@ -2739,6 +2807,16 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                   LLVMRelocStatic, code_model, false,
                   comp_ctx->stack_usage_file))) {
             aot_set_last_error("create LLVM target machine failed.");
+            goto fail;
+        }
+
+        /* If only to create target machine for querying information, early stop
+         */
+        if ((arch && !strcmp(arch, "help")) || (abi && !strcmp(abi, "help"))
+            || (cpu && !strcmp(cpu, "help"))
+            || (features && !strcmp(features, "+help"))) {
+            LOG_DEBUG(
+                "create LLVM target machine only for printing help info.");
             goto fail;
         }
     }

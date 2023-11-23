@@ -10,21 +10,22 @@
 #include "../jit_frontend.h"
 
 #if WASM_ENABLE_REF_TYPES != 0
+static void
+wasm_elem_drop(WASMModuleInstance *inst, uint32 tbl_seg_idx)
+{
+    bh_bitmap_set_bit(inst->e->common.elem_dropped, tbl_seg_idx);
+}
+
 bool
 jit_compile_op_elem_drop(JitCompContext *cc, uint32 tbl_seg_idx)
 {
-    JitReg module, tbl_segs;
+    JitReg args[2] = { 0 };
 
-    module = get_module_reg(cc->jit_frame);
+    args[0] = get_module_inst_reg(cc->jit_frame);
+    args[1] = NEW_CONST(I32, tbl_seg_idx);
 
-    tbl_segs = jit_cc_new_reg_ptr(cc);
-    GEN_INSN(LDPTR, tbl_segs, module,
-             NEW_CONST(I32, offsetof(WASMModule, table_segments)));
-
-    GEN_INSN(STI32, NEW_CONST(I32, true), tbl_segs,
-             NEW_CONST(I32, tbl_seg_idx * sizeof(WASMTableSeg)
-                                + offsetof(WASMTableSeg, is_dropped)));
-    return true;
+    return jit_emit_callnative(cc, wasm_elem_drop, 0, args,
+                               sizeof(args) / sizeof(args[0]));
 }
 
 bool
@@ -88,27 +89,34 @@ fail:
 
 static int
 wasm_init_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 elem_idx,
-                uint32 dst, uint32 len, uint32 src)
+                uint32 dst_offset, uint32 len, uint32 src_offset)
 {
     WASMTableInstance *tbl;
     uint32 tbl_sz;
     WASMTableSeg *elem;
     uint32 elem_len;
 
-    tbl = inst->tables[tbl_idx];
-    tbl_sz = tbl->cur_size;
-    if (dst > tbl_sz || tbl_sz - dst < len)
-        goto out_of_bounds;
-
     elem = inst->module->table_segments + elem_idx;
     elem_len = elem->function_count;
-    if (src > elem_len || elem_len - src < len)
+    if (offset_len_out_of_bounds(src_offset, len, elem_len))
+        goto out_of_bounds;
+
+    tbl = inst->tables[tbl_idx];
+    tbl_sz = tbl->cur_size;
+    if (offset_len_out_of_bounds(dst_offset, len, tbl_sz))
+        goto out_of_bounds;
+
+    if (!len)
+        return 0;
+
+    if (bh_bitmap_get_bit(inst->e->common.elem_dropped, elem_idx))
         goto out_of_bounds;
 
     bh_memcpy_s((uint8 *)tbl + offsetof(WASMTableInstance, elems)
-                    + dst * sizeof(uint32),
-                (uint32)((tbl_sz - dst) * sizeof(uint32)),
-                elem->func_indexes + src, (uint32)(len * sizeof(uint32)));
+                    + dst_offset * sizeof(uint32),
+                (uint32)((tbl_sz - dst_offset) * sizeof(uint32)),
+                elem->func_indexes + src_offset,
+                (uint32)(len * sizeof(uint32)));
 
     return 0;
 out_of_bounds:
@@ -157,14 +165,14 @@ wasm_copy_table(WASMModuleInstance *inst, uint32 src_tbl_idx,
     WASMTableInstance *src_tbl, *dst_tbl;
     uint32 src_tbl_sz, dst_tbl_sz;
 
-    src_tbl = inst->tables[src_tbl_idx];
-    src_tbl_sz = src_tbl->cur_size;
-    if (src_offset > src_tbl_sz || src_tbl_sz - src_offset < len)
-        goto out_of_bounds;
-
     dst_tbl = inst->tables[dst_tbl_idx];
     dst_tbl_sz = dst_tbl->cur_size;
-    if (dst_offset > dst_tbl_sz || dst_tbl_sz - dst_offset < len)
+    if (offset_len_out_of_bounds(dst_offset, len, dst_tbl_sz))
+        goto out_of_bounds;
+
+    src_tbl = inst->tables[src_tbl_idx];
+    src_tbl_sz = src_tbl->cur_size;
+    if (offset_len_out_of_bounds(src_offset, len, src_tbl_sz))
         goto out_of_bounds;
 
     bh_memmove_s((uint8 *)dst_tbl + offsetof(WASMTableInstance, elems)
@@ -263,7 +271,7 @@ fail:
 }
 
 static int
-wasm_fill_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 dst,
+wasm_fill_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 dst_offset,
                 uint32 val, uint32 len)
 {
     WASMTableInstance *tbl;
@@ -272,11 +280,11 @@ wasm_fill_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 dst,
     tbl = inst->tables[tbl_idx];
     tbl_sz = tbl->cur_size;
 
-    if (dst > tbl_sz || tbl_sz - dst < len)
+    if (offset_len_out_of_bounds(dst_offset, len, tbl_sz))
         goto out_of_bounds;
 
-    for (; len != 0; dst++, len--) {
-        tbl->elems[dst] = val;
+    for (; len != 0; dst_offset++, len--) {
+        tbl->elems[dst_offset] = val;
     }
 
     return 0;
